@@ -35,46 +35,42 @@ import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
-import java.util.logging.Logger;
-
-// import java classes
-import java.net.URI;
 import java.io.IOException;
+import java.net.URI;
 import java.util.concurrent.CountDownLatch;
 import java.util.Date;
+import java.util.logging.Logger;
 import java.text.SimpleDateFormat;
-
-// import zookeeper classes
+import org.apache.zookeeper.AsyncCallback.StatCallback;
+import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
-import org.apache.zookeeper.ZooKeeper;
-import org.apache.zookeeper.AsyncCallback.StatCallback;
-import org.apache.zookeeper.KeeperException.Code;
-import org.apache.zookeeper.data.Stat;
-import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.ZooDefs;
-import org.apache.zookeeper.data.Stat;
+import org.apache.zookeeper.ZooKeeper;
 
 class ZookeeperConnection {
   private static final Logger logger = Logger.getLogger("ZooKeeper");
-
-  // declare zookeeper instance to access ZooKeeper ensemble
   private ZooKeeper zoo;
-
   public void ZookeeperConnection() {
   }
 
-  // Method to connect zookeeper ensemble.
-  public boolean connect(String zk_uri_str, String server_ip, String port_str) throws IOException,InterruptedException {
+  /**
+   * Connects to a zookeeper ensemble in zkUriStr.
+   * serverIp and portStr are the IP/Port of this server.
+   */
+  public boolean connect(String zkUriStr, String serverIp, String portStr)
+                         throws IOException,InterruptedException {
     final CountDownLatch connectedSignal = new CountDownLatch(1);
     String zkhostport;
     try {
-      URI zk_uri = new URI(zk_uri_str);
-      zkhostport = zk_uri.getHost().toString() + ":" + Integer.toString(zk_uri.getPort());
+      URI zkUri = new URI(zkUriStr);
+      zkhostport = zkUri.getHost().toString() + ":" + Integer.toString(zkUri.getPort());
     } catch (Exception e) {
-      logger.severe("Could not parse zk URI " + zk_uri_str);
+      logger.severe("Could not parse zk URI " + zkUriStr);
       return false;
     }
 
@@ -90,30 +86,30 @@ class ZookeeperConnection {
 
     String path = "/grpc_hello_world_service";
     Stat stat;
-    String current_time = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(new Date());
+    String currTime = new SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(new Date());
     try {
       stat = zoo.exists(path, true);
       if (stat == null) {
-        zoo.create(path, current_time.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+        zoo.create(path, currTime.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
       }
     } catch (Exception e) {
       logger.severe("Failed to create path");
       return false;
     }
 
-    String server_addr = path + "/" + server_ip + ":" + port_str;
+    String server_addr = path + "/" + serverIp + ":" + portStr;
     try {
       stat = zoo.exists(server_addr, true);
       if (stat == null) {
         try {
-          zoo.create(server_addr, current_time.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
+          zoo.create(server_addr, currTime.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
         } catch (Exception e) {
           logger.severe("Failed to create server_data");
           return false;
         }
       } else {
         try {
-          zoo.setData(server_addr, current_time.getBytes(), stat.getVersion());
+          zoo.setData(server_addr, currTime.getBytes(), stat.getVersion());
         } catch (Exception e) {
           logger.severe("Failed to update server_data");
           return false;
@@ -136,7 +132,7 @@ class ZookeeperConnection {
  * Server that manages startup/shutdown of a {@code Greeter} server.
  */
 public class HelloWorldServer {
-  static String port_str;
+  static String portStr;
   private static final Logger logger = Logger.getLogger(HelloWorldServer.class.getName());
 
   private Server server;
@@ -188,7 +184,7 @@ public class HelloWorldServer {
     String zk_addr;
 
     try {
-      port_str = new String(args[0]);
+      portStr = new String(args[0]);
       zk_addr = new String(args[1]);
     } catch (Exception e) {
       System.out.println("Usage: helloworld_server PORT zk://ADDR:PORT");
@@ -196,20 +192,22 @@ public class HelloWorldServer {
     }
 
     ZookeeperConnection zk_conn = new ZookeeperConnection();
-    if (!zk_conn.connect(zk_addr, "localhost", port_str)) {
+    if (!zk_conn.connect(zk_addr, "localhost", portStr)) {
       return;
     }
 
     final HelloWorldServer server = new HelloWorldServer();
-    server.start(port_str);
+    server.start(portStr);
     server.blockUntilShutdown();
   }
 
   static class GreeterImpl extends GreeterGrpc.GreeterImplBase {
 
     @Override
-    public void sayHello(HelloRequest req, StreamObserver<HelloReply> responseObserver) {
-      HelloReply reply = HelloReply.newBuilder().setMessage("Hello " + req.getName()+ " from " + port_str).build() ;
+    public void sayHello(HelloRequest req,
+                         StreamObserver<HelloReply>responseObserver) {
+      HelloReply reply = HelloReply.newBuilder().setMessage(
+                         "Hello " + req.getName() + " from " + portStr).build();
       responseObserver.onNext(reply);
       responseObserver.onCompleted();
     }

@@ -31,86 +31,82 @@
 
 package io.grpc.examples.helloworld;
 
+import io.grpc.Attributes;
+import io.grpc.EquivalentAddressGroup;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import io.grpc.util.RoundRobinLoadBalancerFactory;
+import io.grpc.NameResolver;
+import io.grpc.NameResolverProvider;
 import io.grpc.StatusRuntimeException;
+import io.grpc.util.RoundRobinLoadBalancerFactory;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.URI;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import java.net.URI;
 import java.util.Comparator;
 import java.util.List;
 import java.util.ArrayList;
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
 import javax.annotation.Nullable;
-
-import io.grpc.Attributes;
-import io.grpc.NameResolver;
-import io.grpc.NameResolverProvider;
-import io.grpc.EquivalentAddressGroup;
-//
-// import zookeeper classes
-import java.util.concurrent.CountDownLatch;
+import org.apache.zookeeper.AsyncCallback.StatCallback;
+import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.data.Stat;
 import org.apache.zookeeper.KeeperException;
-import org.apache.zookeeper.WatchedEvent;
+import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
-import org.apache.zookeeper.ZooKeeper;
-import org.apache.zookeeper.AsyncCallback.StatCallback;
-import org.apache.zookeeper.KeeperException.Code;
-import org.apache.zookeeper.data.Stat;
-import org.apache.zookeeper.CreateMode;
+import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.ZooDefs;
-import org.apache.zookeeper.data.Stat;
+import org.apache.zookeeper.ZooKeeper;
 
 
 class ZkNameResolver extends NameResolver implements Watcher {
-  /* Hard-coded path to the ZkNode that knows about servers */
-  public static final String path = "/grpc_hello_world_service";
-  /* 2 seconds to detect that server disconnected */
-  public static final int kTimeoutMs = 2000;
+  /** Hard-coded path to the ZkNode that knows about servers.
+   * Note this must match with the path used by HelloWorldServer */
+  public static final String PATH = "/grpc_hello_world_service";
+  /** 2 seconds to indicate that client disconnected */
+  public static final int TIMEOUT_MS = 2000;
 
-  private static URI zk_uri;
-  private static ZooKeeper zoo;
-  private static Listener listener;
-  private static final Logger logger = Logger.getLogger("ZK");
+  private URI zkUri;
+  private ZooKeeper zoo;
+  private Listener listener;
+  private final Logger logger = Logger.getLogger("ZK");
 
-  /*
+  /**
    * The callback from Zookeeper when servers are added/removed.
    */
+  @Override
   public void process(WatchedEvent we) {
     if (we.getType() == Event.EventType.None) {
       logger.info("Connection expired");
     } else {
       try {
-        List<String> servers  = zoo.getChildren(path, false);
+        List<String> servers  = zoo.getChildren(PATH, false);
         AddServersToListener(servers);
-        zoo.getChildren(path, this);
+        zoo.getChildren(PATH, this);
       } catch(Exception ex) {
         logger.info(ex.getMessage());
       }
     }
   }
 
-  public void AddServersToListener(List<String> servers) {
+  private void AddServersToListener(List<String> servers) {
     List<EquivalentAddressGroup> addrs = new ArrayList<EquivalentAddressGroup>();
     logger.info("Updating server list");
     for (String child : servers) {
       try {
         logger.info("Online: " + child);
         URI uri = new URI("dummy://" + child);
-        /* Convert "host:port" into host and port */
+        // Convert "host:port" into host and port
         String host = uri.getHost();
         int port = uri.getPort();
         List<SocketAddress> sockaddrs_list= new ArrayList<SocketAddress>();
         sockaddrs_list.add(new InetSocketAddress(host, port));
-        EquivalentAddressGroup eag =  new EquivalentAddressGroup(sockaddrs_list);
-        addrs.add(eag);
+        addrs.add(new EquivalentAddressGroup(sockaddrs_list));
       } catch(Exception ex) {
-        logger.info("Unparsable server address: "+child);
+        logger.info("Unparsable server address: " + child);
         logger.info(ex.getMessage());
       }
     }
@@ -122,13 +118,13 @@ class ZkNameResolver extends NameResolver implements Watcher {
   }
 
 
-  public ZkNameResolver (URI zk_uri) {
-    this.zk_uri = zk_uri;
+  public ZkNameResolver (URI zkUri) {
+    this.zkUri = zkUri;
   }
 
   @Override
   public String getServiceAuthority() {
-    return zk_uri.getAuthority();
+    return zkUri.getAuthority();
   }
 
   @Override
@@ -136,10 +132,10 @@ class ZkNameResolver extends NameResolver implements Watcher {
     this.listener = listener;
     final CountDownLatch connectedSignal = new CountDownLatch(1);
     try {
-      String zkaddr = zk_uri.getHost().toString() + ":" + Integer.toString(zk_uri.getPort());
+      String zkaddr = zkUri.getHost().toString() + ":" + Integer.toString(zkUri.getPort());
       logger.info("Connecting to Zookeeper Address " + zkaddr);
 
-      this.zoo = new ZooKeeper(zkaddr, kTimeoutMs, new Watcher() {
+      this.zoo = new ZooKeeper(zkaddr, TIMEOUT_MS, new Watcher() {
         public void process(WatchedEvent we) {
           if (we.getState() == KeeperState.SyncConnected) {
             connectedSignal.countDown();
@@ -155,11 +151,11 @@ class ZkNameResolver extends NameResolver implements Watcher {
 
 
     try {
-      Stat stat = zoo.exists(path, true);
+      Stat stat = zoo.exists(PATH, true);
       if (stat == null) {
-        logger.info("Path does not exist.");
+        logger.info("PATH does not exist.");
       } else {
-        logger.info("Path exists");
+        logger.info("PATH exists");
       }
     } catch (Exception e) {
       logger.info("Failed to get stat");
@@ -168,7 +164,7 @@ class ZkNameResolver extends NameResolver implements Watcher {
 
     try {
       final CountDownLatch connectedSignal1 = new CountDownLatch(1);
-      List<String> servers = zoo.getChildren(path, this);
+      List<String> servers = zoo.getChildren(PATH, this);
       AddServersToListener(servers);
     } catch(Exception e) {
       logger.info(e.getMessage());
@@ -213,10 +209,12 @@ public class HelloWorldClient {
   private final ManagedChannel channel;
   private final GreeterGrpc.GreeterBlockingStub blockingStub;
 
-  /** Construct client connecting to HelloWorld server using Zookeeper name resolver
-   * and Round Robin load balancer. */
-  public HelloWorldClient(String zk_addr) {
-    this(ManagedChannelBuilder.forTarget(zk_addr)
+  /**
+   * Construct client connecting to HelloWorld server using Zookeeper name resolver
+   * and Round Robin load balancer.
+   */
+  public HelloWorldClient(String zkAddr) {
+    this(ManagedChannelBuilder.forTarget(zkAddr)
         .loadBalancerFactory(RoundRobinLoadBalancerFactory.getInstance())
         .nameResolverFactory(new ZkNameResolverProvider())
         .usePlaintext(true));
@@ -246,8 +244,8 @@ public class HelloWorldClient {
   }
 
   /**
-   * Greet client. If provided, the first argument of {@code args} is the address
-   * of the Zookeeper ensemble. The client keeps making simple RPCs until interrupted
+   * Greeter client. First argument of {@code args} is the address of the
+   * Zookeeper ensemble. The client keeps making simple RPCs until interrupted
    * with a Ctrl-C.
    */
   public static void main(String[] args) throws Exception {
